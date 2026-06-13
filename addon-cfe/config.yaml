@@ -23,7 +23,7 @@ options:
   mqtt_port: 1883
   mqtt_user: ""
   mqtt_password: ""
-  pdf_dir: "/share/cfe_recibos"
+  pdf_dir: "/config/www"
   debug_screenshots: false
 schema:
   cuentas:
