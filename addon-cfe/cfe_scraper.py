@@ -394,29 +394,72 @@ class CFEScraper:
         Path(self.pdf_dir).mkdir(parents=True, exist_ok=True)
         filename = f"{self.pdf_dir}/{self.slug}_{datetime.now().strftime('%Y%m')}.pdf"
 
-        pdf_selectors = [
-            'a[href*=".pdf"]',
-            'a[href*="recibo"]',
-            'button:has-text("Descargar recibo")',
-            'a:has-text("Descargar")',
-            'button:has-text("PDF")',
-            'a:has-text("Recibo")',
-        ]
+        # Esperar tabla de historial
+        try:
+            await page.wait_for_selector('#ctl00_MainContent_GVHistorial', timeout=10000)
+            log.info(f"[{self.nombre}] GVHistorial encontrado")
+        except Exception as e:
+            log.info(f"[{self.nombre}] GVHistorial no encontrado: {e}")
+            self.data["recibo_pdf"] = "no_encontrado"
+            return
 
-        for sel in pdf_selectors:
-            try:
-                async with page.expect_download(timeout=15000) as dl_info:
-                    await page.click(sel, timeout=3000)
-                download = await dl_info.value
-                await download.save_as(filename)
+        # Método 1: click en enlace + expect_download
+        try:
+            async with page.expect_download(timeout=20000) as dl_info:
+                await page.click('a[title="Descarga Pdf"]', timeout=5000)
+            download = await dl_info.value
+            await download.save_as(filename)
+            self.data["recibo_pdf"] = filename
+            log.info(f"[{self.nombre}] PDF guardado (click): {filename}")
+            return
+        except Exception as e:
+            log.info(f"  Método 1 (click) falló: {e}")
+
+        # Método 2: __doPostBack + expect_download
+        try:
+            async with page.expect_download(timeout=20000) as dl_info:
+                await page.evaluate(
+                    "__doPostBack('ctl00$MainContent$GVHistorial$ctl02$DescargaPDF', '')"
+                )
+            download = await dl_info.value
+            await download.save_as(filename)
+            self.data["recibo_pdf"] = filename
+            log.info(f"[{self.nombre}] PDF guardado (postback): {filename}")
+            return
+        except Exception as e:
+            log.info(f"  Método 2 (postback) falló: {e}")
+
+        # Método 3: interceptar respuesta de red
+        try:
+            pdf_response = None
+            async def capture_pdf(response):
+                nonlocal pdf_response
+                ct = response.headers.get("content-type", "")
+                cd = response.headers.get("content-disposition", "")
+                if "pdf" in ct.lower() or "pdf" in cd.lower():
+                    pdf_response = response
+                    log.info(f"  PDF detectado en red: {response.url[:80]}")
+            page.on("response", capture_pdf)
+            await page.evaluate(
+                "__doPostBack('ctl00$MainContent$GVHistorial$ctl02$DescargaPDF', '')"
+            )
+            await page.wait_for_timeout(8000)
+            page.remove_listener("response", capture_pdf)
+            if pdf_response:
+                pdf_bytes = await pdf_response.body()
+                with open(filename, "wb") as f:
+                    f.write(pdf_bytes)
                 self.data["recibo_pdf"] = filename
-                log.info(f"[{self.nombre}] PDF: {filename}")
+                log.info(f"[{self.nombre}] PDF guardado (intercept): {filename}")
                 return
-            except:
-                continue
+            else:
+                log.info(f"  Método 3: sin respuesta PDF en red")
+        except Exception as e:
+            log.info(f"  Método 3 (intercept) falló: {e}")
 
-        log.warning(f"[{self.nombre}] PDF no encontrado (ajustar selector si cambia el portal)")
+        log.warning(f"[{self.nombre}] PDF no descargado")
         self.data["recibo_pdf"] = "no_encontrado"
+
 
     # ── Debug screenshots ─────────────────────────────────────────────────────
 
