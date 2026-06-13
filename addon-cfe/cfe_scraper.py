@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CFE Portal Addon para Home Assistant v1.5
+CFE Portal Addon para Home Assistant v1.6
 Extrae: saldo, consumo kWh, fecha corte, fecha pago, recibo PDF
 Resuelve captcha de imagen via 2captcha.com
 Publica via MQTT Discovery
@@ -670,7 +670,7 @@ def main():
     intervalo_horas = int(options.get("intervalo_horas", 24))
 
     log.info("=" * 55)
-    log.info("  CFE Portal Addon v1.5  |  captcha: 2captcha.com")
+    log.info("  CFE Portal Addon v1.6  |  captcha: 2captcha.com")
     log.info(f"  Cuentas: {len(options.get('cuentas',[]))}  |  Intervalo: {intervalo_horas}h")
     log.info("=" * 55)
 
