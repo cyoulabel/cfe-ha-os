@@ -1,31 +1,25 @@
-ARG BUILD_FROM
-FROM $BUILD_FROM
+FROM python:3.11-slim-bookworm
 
-# Install system dependencies for Playwright/Chromium
-RUN apk add --no-cache \
-    python3 \
-    py3-pip \
+# Dependencias del sistema para Playwright/Chromium
+RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
-    chromium-chromedriver \
-    nss \
-    freetype \
-    harfbuzz \
-    ttf-freefont \
-    font-noto-cjk \
-    wqy-zenhei \
-    && rm -rf /var/cache/apk/*
+    chromium-driver \
+    fonts-freefont-ttf \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libgtk-3-0 \
+    libxss1 \
+    libasound2 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Tell Playwright to use system Chromium instead of downloading its own
-ENV PLAYWRIGHT_BROWSERS_PATH=/usr/lib/chromium
-ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+# Usar Chromium del sistema, no descargar uno propio
+ENV PLAYWRIGHT_BROWSERS_PATH=/usr/bin
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
-
-# Install only Chromium for Playwright (no download, use system)
-RUN python3 -m playwright install-deps chromium 2>/dev/null || true
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY cfe_scraper.py .
 COPY run.sh .
