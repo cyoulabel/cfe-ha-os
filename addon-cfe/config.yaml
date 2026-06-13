@@ -1,6 +1,6 @@
 name: "CFE Portal"
 description: "Extrae saldo, consumo, fechas y recibo PDF del portal de CFE via MQTT Discovery"
-version: "1.1.0"
+version: "1.2.0"
 slug: "addon-cfe"
 init: false
 arch:
