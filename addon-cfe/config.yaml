@@ -15,14 +15,14 @@ map:
     read_only: false
 options:
   cuentas:
-    - nombre: "Casa"
+    - nombre: "Privada"
       usuario: ""
       password: ""
       num_servicio: ""
   captcha_api_key: ""
   intervalo_horas: 24
   dias_anticipo: 5
-  pdf_dir: "/config/www/cfe"
+  pdf_dir: "/config/www"
   mqtt_host: "core-mosquitto"
   mqtt_port: 1883
   mqtt_user: ""
