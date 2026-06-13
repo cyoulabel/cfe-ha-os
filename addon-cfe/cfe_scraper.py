@@ -27,8 +27,6 @@ logging.basicConfig(
 log = logging.getLogger("cfe_addon")
 
 OPTIONS_FILE  = "/data/options.json"
-PDF_DIR       = "/share/cfe_recibos"
-SCREENSHOTS_DIR = "/share/cfe_recibos/debug"
 
 CFE_LOGIN_URL = "https://app.cfe.mx/Aplicaciones/CCFE/MiEspacio/login.aspx"
 CFE_BASE_URL  = "https://app.cfe.mx"
@@ -125,7 +123,7 @@ async def resolver_captcha(page, api_key: str) -> str:
 # ── Scraper ──────────────────────────────────────────────────────────────────
 
 class CFEScraper:
-    def __init__(self, cuenta: dict, captcha_api_key: str, debug: bool = False):
+    def __init__(self, cuenta: dict, captcha_api_key: str, pdf_dir: str, debug: bool = False):
         self.nombre          = cuenta["nombre"]
         self.usuario             = cuenta["usuario"]
         self.password        = cuenta["password"]
@@ -400,8 +398,8 @@ class CFEScraper:
 
     async def _download_pdf(self, page, context):
         log.info(f"[{self.nombre}] Buscando recibo PDF...")
-        Path(PDF_DIR).mkdir(parents=True, exist_ok=True)
-        filename = f"{PDF_DIR}/{self.slug}_{datetime.now().strftime('%Y%m')}.pdf"
+        Path(self.pdf_dir).mkdir(parents=True, exist_ok=True)
+        filename = f"{self.pdf_dir}/{self.slug}_{datetime.now().strftime('%Y%m')}.pdf"
 
         pdf_selectors = [
             'a[href*=".pdf"]',
@@ -430,8 +428,9 @@ class CFEScraper:
     # ── Debug screenshots ─────────────────────────────────────────────────────
 
     async def _screenshot(self, page, nombre: str):
-        Path(SCREENSHOTS_DIR).mkdir(parents=True, exist_ok=True)
-        path = f"{SCREENSHOTS_DIR}/{self.slug}_{nombre}.png"
+        screenshots_dir = f"{self.pdf_dir}/debug"
+        Path(screenshots_dir).mkdir(parents=True, exist_ok=True)
+        path = f"{screenshots_dir}/{self.slug}_{nombre}.png"
         await page.screenshot(path=path, full_page=True)
         log.debug(f"  Screenshot: {path}")
 
@@ -500,6 +499,7 @@ async def run_cycle(options: dict):
     mqtt_user       = options.get("mqtt_user") or None
     mqtt_pass       = options.get("mqtt_password") or None
     debug           = options.get("debug_screenshots", False)
+    pdf_dir         = options.get("pdf_dir", "/share/cfe_recibos")
 
     if not captcha_api_key:
         log.error("captcha_api_key no configurado. Registrarse en 2captcha.com y agregar la API key en opciones.")
@@ -512,7 +512,7 @@ async def run_cycle(options: dict):
 
     for cuenta in cuentas:
         log.info(f"─── {cuenta.get('nombre')} (Usuario: {cuenta.get('usuario','')[:4]}***) ───")
-        scraper = CFEScraper(cuenta, captcha_api_key, debug=debug)
+        scraper = CFEScraper(cuenta, captcha_api_key, pdf_dir=pdf_dir, debug=debug)
         data    = await scraper.scrape()
         slug    = slugify(cuenta["nombre"])
         publisher.publish_discovery(slug, cuenta["nombre"])

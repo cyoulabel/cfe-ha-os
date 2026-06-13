@@ -22,6 +22,7 @@ options:
   mqtt_port: 1883
   mqtt_user: ""
   mqtt_password: ""
+  pdf_dir: "/share/cfe_recibos"
   debug_screenshots: false
 schema:
   cuentas:
@@ -35,4 +36,5 @@ schema:
   mqtt_port: int
   mqtt_user: str?
   mqtt_password: str?
+  pdf_dir: str?
   debug_screenshots: bool?
