@@ -36,7 +36,7 @@ cuentas:
   - nombre: "Casa"
     usuario: "tu_correo@mail.com"
     password: "tu_clave"
-    num_servicio: "926161001716"  # opcional, del dropdown si tienes varias cuentas
+    num_servicio: "933161991716"  # opcional, del dropdown si tienes varias cuentas
 captcha_api_key: "TU_API_KEY"
 intervalo_horas: 24
 dias_anticipo: 5        # días antes del próximo recibo para empezar a revisar
