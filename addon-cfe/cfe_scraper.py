@@ -136,7 +136,10 @@ class CFEScraper:
 
     async def scrape(self) -> dict:
         async with async_playwright() as p:
+            # Usar el Chromium del sistema instalado via apt-get
+            chromium_path = "/usr/bin/chromium"
             browser = await p.chromium.launch(
+                executable_path=chromium_path,
                 headless=True,
                 args=[
                     "--no-sandbox",
