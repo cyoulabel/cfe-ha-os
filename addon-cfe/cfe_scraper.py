@@ -685,6 +685,18 @@ def main():
     except:
         pass
 
+    # Esperar que la red esté lista antes del primer ciclo
+    import socket
+    for intento in range(10):
+        try:
+            socket.setdefaulttimeout(3)
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
+            log.info("Red disponible ✓")
+            break
+        except:
+            log.info(f"Esperando red... ({intento+1}/10)")
+            time.sleep(10)
+
     while True:
         try:
             resultado = asyncio.run(run_cycle(options))
