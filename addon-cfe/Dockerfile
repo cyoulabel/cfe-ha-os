@@ -1,5 +1,6 @@
-FROM python:3.11-slim-bookworm
- 
+ARG BUILD_FROM=python:3.11-slim-bookworm
+FROM $BUILD_FROM
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     fonts-freefont-ttf \
@@ -10,18 +11,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxss1 \
     libasound2 \
     && rm -rf /var/lib/apt/lists/*
- 
+
 WORKDIR /app
- 
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
- 
-# Usar el Chromium del sistema, no descargar uno separado
+
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
- 
+
 COPY cfe_scraper.py .
 COPY run.sh .
 RUN chmod +x run.sh
- 
+
 CMD ["/app/run.sh"]
  
