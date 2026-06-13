@@ -125,9 +125,11 @@ async def resolver_captcha(page, api_key: str) -> str:
 class CFEScraper:
     def __init__(self, cuenta: dict, captcha_api_key: str, pdf_dir: str, debug: bool = False):
         self.nombre          = cuenta["nombre"]
-        self.usuario             = cuenta["usuario"]
+        self.usuario         = cuenta["usuario"]
         self.password        = cuenta["password"]
+        self.num_servicio    = cuenta.get("num_servicio", "").replace(" ", "")
         self.captcha_api_key = captcha_api_key
+        self.pdf_dir         = pdf_dir
         self.slug            = slugify(self.nombre)
         self.debug           = debug
         self.data: dict      = {}
