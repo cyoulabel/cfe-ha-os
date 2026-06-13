@@ -390,9 +390,25 @@ class CFEScraper:
     # ── Descarga PDF ──────────────────────────────────────────────────────────
 
     async def _download_pdf(self, page, context):
-        log.info(f"[{self.nombre}] Buscando recibo PDF...")
         Path(self.pdf_dir).mkdir(parents=True, exist_ok=True)
-        filename = f"{self.pdf_dir}/{self.slug}_{datetime.now().strftime('%Y%m')}.pdf"
+
+        # Nombre del PDF basado en el periodo del recibo
+        # "20 MAR 26 al 19 MAY 26" → "20MAR26_19MAY26"
+        periodo = self.data.get("periodo", "")
+        if periodo:
+            periodo_slug = periodo.replace(" al ", "_").replace(" ", "")
+        else:
+            periodo_slug = datetime.now().strftime("%Y%m")
+
+        filename = f"{self.pdf_dir}/{self.slug}_{periodo_slug}.pdf"
+
+        # Si ya existe el PDF de este periodo, no descargar de nuevo
+        if Path(filename).exists():
+            log.info(f"[{self.nombre}] PDF ya existe para periodo '{periodo}', omitiendo descarga")
+            self.data["recibo_pdf"] = filename
+            return
+
+        log.info(f"[{self.nombre}] Descargando PDF periodo '{periodo}'...")
 
         # Esperar tabla de historial
         try:
@@ -410,7 +426,7 @@ class CFEScraper:
             download = await dl_info.value
             await download.save_as(filename)
             self.data["recibo_pdf"] = filename
-            log.info(f"[{self.nombre}] PDF guardado (click): {filename}")
+            log.info(f"[{self.nombre}] PDF guardado: {filename}")
             return
         except Exception as e:
             log.info(f"  Método 1 (click) falló: {e}")
@@ -459,7 +475,6 @@ class CFEScraper:
 
         log.warning(f"[{self.nombre}] PDF no descargado")
         self.data["recibo_pdf"] = "no_encontrado"
-
 
     # ── Debug screenshots ─────────────────────────────────────────────────────
 
@@ -546,6 +561,8 @@ async def run_cycle(options: dict):
 
     publisher = MQTTPublisher(mqtt_host, mqtt_port, mqtt_user, mqtt_pass)
 
+    periodos_resultado = {}
+
     for cuenta in cuentas:
         log.info(f"─── {cuenta.get('nombre')} (Usuario: {cuenta.get('usuario','')[:4]}***) ───")
         slug = slugify(cuenta["nombre"])
@@ -569,27 +586,111 @@ async def run_cycle(options: dict):
 
         publisher.publish_discovery(slug, cuenta["nombre"])
         publisher.publish_data(slug, data)
+        periodos_resultado[slug] = {
+            "periodo":       data.get("periodo", ""),
+            "estado_recibo": data.get("estado_recibo", ""),
+            "pdf_ok":        data.get("recibo_pdf", "no_encontrado") not in ("no_encontrado", ""),
+        }
 
     publisher.disconnect()
     log.info("✓ Ciclo completado.")
 
 
+# Meses en español para parsear el periodo CFE
+MESES_ES = {
+    "ENE": 1, "FEB": 2, "MAR": 3, "ABR": 4, "MAY": 5, "JUN": 6,
+    "JUL": 7, "AGO": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DIC": 12
+}
+
+def parse_fecha_cfe(texto: str):
+    """'20 MAR 26' → datetime(2026, 3, 20)"""
+    try:
+        partes = texto.strip().split()
+        dia = int(partes[0])
+        mes = MESES_ES.get(partes[1].upper(), 0)
+        anio = 2000 + int(partes[2])
+        return datetime(anio, mes, dia)
+    except:
+        return None
+
+def calcular_proximo_inicio(periodo: str):
+    """
+    '20 MAR 26 al 19 MAY 26' → próximo inicio esperado (inicio + 2 meses)
+    """
+    try:
+        inicio_str = periodo.split(" al ")[0].strip()
+        inicio = parse_fecha_cfe(inicio_str)
+        if not inicio:
+            return None
+        # Sumar 2 meses
+        mes = inicio.month + 2
+        anio = inicio.year + (mes - 1) // 12
+        mes = ((mes - 1) % 12) + 1
+        return datetime(anio, mes, inicio.day)
+    except:
+        return None
+
+def calcular_sleep(options: dict, ultimo_periodo: str, estado: str, pdf_ok: bool) -> float:
+    """
+    Lógica de sleep inteligente:
+    - PAGADO + PDF descargado → dormir hasta (próximo periodo - dias_anticipo)
+    - PENDIENTE o sin PDF     → revisar cada intervalo_horas (puede no haberse pagado)
+    """
+    intervalo_horas = int(options.get("intervalo_horas", 24))
+    dias_anticipo   = int(options.get("dias_anticipo", 5))
+    ahora           = datetime.now()
+
+    pagado  = estado.upper() == "PAGADO" if estado else False
+    pdf_listo = pdf_ok and ultimo_periodo
+
+    if pagado and pdf_listo:
+        proximo_inicio = calcular_proximo_inicio(ultimo_periodo)
+        if proximo_inicio:
+            fecha_despertar = proximo_inicio - timedelta(days=dias_anticipo)
+            if fecha_despertar > ahora:
+                segundos = (fecha_despertar - ahora).total_seconds()
+                log.info(
+                    f"Recibo PAGADO ✓ | "
+                    f"Próximo recibo: {proximo_inicio.strftime('%d/%m/%Y')} | "
+                    f"Revisando desde: {fecha_despertar.strftime('%d/%m/%Y')} | "
+                    f"Durmiendo {segundos/3600:.1f}h ({segundos/86400:.1f} días)"
+                )
+                return segundos
+
+    # PENDIENTE o no pudo descargar PDF → revisar normalmente
+    razon = "PENDIENTE" if not pagado else "PDF pendiente"
+    log.info(f"Estado: {razon} — próximo ciclo en {intervalo_horas}h")
+    return intervalo_horas * 3600
+
+
 def main():
-    options         = load_options()
-    intervalo_horas = int(options.get("intervalo_horas", 12))
+    options = load_options()
+    intervalo_horas = int(options.get("intervalo_horas", 24))
 
     log.info("=" * 55)
     log.info("  CFE Portal Addon v1.1  |  captcha: 2captcha.com")
     log.info(f"  Cuentas: {len(options.get('cuentas',[]))}  |  Intervalo: {intervalo_horas}h")
     log.info("=" * 55)
 
+    ultimo_resultado = {}  # {slug: {periodo, estado, pdf_ok}}
+
     while True:
         try:
-            asyncio.run(run_cycle(options))
+            resultado = asyncio.run(run_cycle(options))
+            if isinstance(resultado, dict):
+                ultimo_resultado.update(resultado)
         except Exception as e:
             log.error(f"Error en ciclo principal: {e}", exc_info=True)
-        log.info(f"Siguiente ciclo en {intervalo_horas} horas.")
-        time.sleep(intervalo_horas * 3600)
+
+        # Sleep inteligente: usa la primera cuenta como referencia
+        ref = next(iter(ultimo_resultado.values()), {}) if ultimo_resultado else {}
+        segundos = calcular_sleep(
+            options,
+            ultimo_periodo = ref.get("periodo", ""),
+            estado         = ref.get("estado_recibo", ""),
+            pdf_ok         = ref.get("pdf_ok", False),
+        )
+        time.sleep(segundos)
 
 
 if __name__ == "__main__":
