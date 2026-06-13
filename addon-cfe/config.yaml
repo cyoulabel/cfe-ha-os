@@ -18,7 +18,7 @@ options:
       password: ""
       num_servicio: ""
   captcha_api_key: ""
-  intervalo_horas: 12
+  intervalo_horas: 24
   mqtt_host: "core-mosquitto"
   mqtt_port: 1883
   mqtt_user: ""
