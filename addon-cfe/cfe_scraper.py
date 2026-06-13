@@ -594,6 +594,7 @@ async def run_cycle(options: dict):
 
     publisher.disconnect()
     log.info("✓ Ciclo completado.")
+    return periodos_resultado
 
 
 # Meses en español para parsear el periodo CFE
