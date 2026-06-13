@@ -338,40 +338,30 @@ class CFEScraper:
 
     async def _extract_data(self, page):
         log.info(f"[{self.nombre}] Extrayendo datos del dashboard...")
-        await page.wait_for_timeout(3000)
+
+        # Esperar a que cargue el monto — ID exacto del portal CFE
+        try:
+            await page.wait_for_selector('#ctl00_MainContent_lblMonto', timeout=20000)
+        except:
+            await page.wait_for_timeout(5000)
 
         if self.debug:
             await self._screenshot(page, "05_dashboard")
 
-        self.data["saldo"]       = await self._try_number(page, [
-            '[class*="saldo"]', '[class*="adeudo"]', '[class*="deuda"]',
-            '[id*="saldo"]', '[id*="adeudo"]',
-            'td:has-text("Adeudo") + td',
-            'td:has-text("Total a pagar") + td',
-        ])
-        self.data["consumo_kwh"] = await self._try_number(page, [
-            '[class*="consumo"]', '[class*="kwh"]',
-            '[id*="consumo"]',
-            'td:has-text("Consumo") + td',
-        ])
-        self.data["fecha_corte"] = await self._try_text(page, [
-            '[class*="corte"]', '[id*="corte"]',
-            'td:has-text("Fecha de corte") + td',
-            'td:has-text("Periodo") + td',
-        ])
-        self.data["fecha_pago"]  = await self._try_text(page, [
-            '[class*="vencimiento"]', '[id*="vencimiento"]',
-            'td:has-text("Fecha límite") + td',
-            'td:has-text("Vencimiento") + td',
-        ])
-        self.data["usuario"]          = self.usuario
+        # IDs exactos obtenidos del HTML real del portal CFE (Mi Espacio)
+        self.data["saldo"]         = await self._try_number(page, ['#ctl00_MainContent_lblMonto'])
+        self.data["periodo"]       = await self._try_text(page,   ['#ctl00_MainContent_lblPeriodoConsumo'])
+        self.data["fecha_limite"]  = await self._try_text(page,   ['#ctl00_MainContent_lblFechaLimite'])
+        self.data["estado_recibo"] = await self._try_text(page,   ['#ctl00_MainContent_lblEstadoRecibo'])
+        self.data["num_servicio"]  = await self._try_text(page,   ['#ctl00_MainContent_lblNumeroServicio'])
         self.data["nombre_cuenta"] = self.nombre
 
         log.info(
-            f"[{self.nombre}] saldo=${self.data.get('saldo')} | "
-            f"consumo={self.data.get('consumo_kwh')} kWh | "
-            f"corte={self.data.get('fecha_corte')} | "
-            f"pago={self.data.get('fecha_pago')}"
+            f"[{self.nombre}] "
+            f"saldo={self.data.get('saldo')} | "
+            f"periodo={self.data.get('periodo')} | "
+            f"limite={self.data.get('fecha_limite')} | "
+            f"estado={self.data.get('estado_recibo')}"
         )
 
     async def _try_number(self, page, selectors) -> float | None:
