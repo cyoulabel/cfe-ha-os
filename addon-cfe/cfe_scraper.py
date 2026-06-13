@@ -615,18 +615,19 @@ def parse_fecha_cfe(texto: str):
 
 def calcular_proximo_inicio(periodo: str):
     """
-    '20 MAR 26 al 19 MAY 26' → próximo inicio esperado (inicio + 2 meses)
+    '20 MAR 26 al 19 MAY 26' → fecha esperada del próximo recibo (fin + 2 meses)
+    ej: fin=19 MAY 26 → próximo recibo ~19 JUL 26
     """
     try:
-        inicio_str = periodo.split(" al ")[0].strip()
-        inicio = parse_fecha_cfe(inicio_str)
-        if not inicio:
+        fin_str = periodo.split(" al ")[1].strip()
+        fin = parse_fecha_cfe(fin_str)
+        if not fin:
             return None
-        # Sumar 2 meses
-        mes = inicio.month + 2
-        anio = inicio.year + (mes - 1) // 12
-        mes = ((mes - 1) % 12) + 1
-        return datetime(anio, mes, inicio.day)
+        # Sumar 2 meses al fin del periodo actual
+        mes  = fin.month + 2
+        anio = fin.year + (mes - 1) // 12
+        mes  = ((mes - 1) % 12) + 1
+        return datetime(anio, mes, fin.day)
     except:
         return None
 
@@ -668,7 +669,7 @@ def main():
     intervalo_horas = int(options.get("intervalo_horas", 24))
 
     log.info("=" * 55)
-    log.info("  CFE Portal Addon v1.1  |  captcha: 2captcha.com")
+    log.info("  CFE Portal Addon v1.4  |  captcha: 2captcha.com")
     log.info(f"  Cuentas: {len(options.get('cuentas',[]))}  |  Intervalo: {intervalo_horas}h")
     log.info("=" * 55)
 
