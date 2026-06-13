@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CFE Portal Addon para Home Assistant v1.4
+CFE Portal Addon para Home Assistant v1.5
 Extrae: saldo, consumo kWh, fecha corte, fecha pago, recibo PDF
 Resuelve captcha de imagen via 2captcha.com
 Publica via MQTT Discovery
@@ -669,21 +669,40 @@ def main():
     intervalo_horas = int(options.get("intervalo_horas", 24))
 
     log.info("=" * 55)
-    log.info("  CFE Portal Addon v1.4  |  captcha: 2captcha.com")
+    log.info("  CFE Portal Addon v1.5  |  captcha: 2captcha.com")
     log.info(f"  Cuentas: {len(options.get('cuentas',[]))}  |  Intervalo: {intervalo_horas}h")
     log.info("=" * 55)
 
-    ultimo_resultado = {}  # {slug: {periodo, estado, pdf_ok}}
+    ESTADO_FILE = "/data/ultimo_resultado.json"
+
+    # Cargar último resultado conocido (persiste entre reinicios)
+    ultimo_resultado = {}
+    try:
+        if Path(ESTADO_FILE).exists():
+            ultimo_resultado = json.load(open(ESTADO_FILE))
+            log.info(f"Estado anterior cargado: {list(ultimo_resultado.keys())}")
+    except:
+        pass
 
     while True:
         try:
             resultado = asyncio.run(run_cycle(options))
             if isinstance(resultado, dict):
-                ultimo_resultado.update(resultado)
+                # Solo actualizar si el ciclo tuvo datos útiles (no solo error)
+                for slug, datos in resultado.items():
+                    if datos.get("periodo"):  # ciclo exitoso
+                        ultimo_resultado[slug] = datos
+                    elif slug not in ultimo_resultado:
+                        ultimo_resultado[slug] = datos
+                # Persistir en disco para sobrevivir reinicios
+                try:
+                    json.dump(ultimo_resultado, open(ESTADO_FILE, "w"))
+                except:
+                    pass
         except Exception as e:
             log.error(f"Error en ciclo principal: {e}", exc_info=True)
 
-        # Sleep inteligente: usa la primera cuenta como referencia
+        # Sleep inteligente basado en el último resultado exitoso
         ref = next(iter(ultimo_resultado.values()), {}) if ultimo_resultado else {}
         segundos = calcular_sleep(
             options,
