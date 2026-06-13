@@ -355,6 +355,7 @@ class CFEScraper:
         self.data["estado_recibo"] = await self._try_text(page,   ['#ctl00_MainContent_lblEstadoRecibo'])
         self.data["num_servicio"]  = await self._try_text(page,   ['#ctl00_MainContent_lblNumeroServicio'])
         self.data["nombre_cuenta"] = self.nombre
+        self.data["error"]          = "OK"  # limpiar errores de intentos anteriores
 
         log.info(
             f"[{self.nombre}] "
@@ -504,9 +505,25 @@ async def run_cycle(options: dict):
 
     for cuenta in cuentas:
         log.info(f"─── {cuenta.get('nombre')} (Usuario: {cuenta.get('usuario','')[:4]}***) ───")
-        scraper = CFEScraper(cuenta, captcha_api_key, pdf_dir=pdf_dir, debug=debug)
-        data    = await scraper.scrape()
-        slug    = slugify(cuenta["nombre"])
+        slug = slugify(cuenta["nombre"])
+
+        # Hasta 3 reintentos si el captcha falla
+        max_intentos = 3
+        for intento in range(1, max_intentos + 1):
+            if intento > 1:
+                log.info(f"  Reintento {intento}/{max_intentos} en 15 segundos...")
+                await asyncio.sleep(15)
+
+            scraper = CFEScraper(cuenta, captcha_api_key, pdf_dir=pdf_dir, debug=debug)
+            data    = await scraper.scrape()
+
+            # Si el error es de captcha, reintentar; cualquier otro error, no
+            error = data.get("error", "")
+            if "captcha" in error.lower() and intento < max_intentos:
+                log.warning(f"  Captcha incorrecto, reintentando...")
+                continue
+            break  # Éxito o error no-captcha
+
         publisher.publish_discovery(slug, cuenta["nombre"])
         publisher.publish_data(slug, data)
 
