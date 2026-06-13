@@ -127,7 +127,7 @@ async def resolver_captcha(page, api_key: str) -> str:
 class CFEScraper:
     def __init__(self, cuenta: dict, captcha_api_key: str, debug: bool = False):
         self.nombre          = cuenta["nombre"]
-        self.rpu             = cuenta["rpu"]
+        self.usuario             = cuenta["usuario"]
         self.password        = cuenta["password"]
         self.captcha_api_key = captcha_api_key
         self.slug            = slugify(self.nombre)
@@ -157,6 +157,7 @@ class CFEScraper:
 
             try:
                 await self._login(page)
+                await self._select_servicio(page)
                 await self._extract_data(page)
                 await self._download_pdf(page, context)
             except PlaywrightTimeout as e:
@@ -190,16 +191,16 @@ class CFEScraper:
         )
         log.info(f"[{self.nombre}] Inputs en página: {inputs}")
 
-        # ── Campo RPU ────────────────────────────────────────────────────────
+        # ── Campo Usuario ────────────────────────────────────────────────────────
+        # El portal CFE usa "Usuario:" — acepta correo o número de servicio
         usuario_selectors = [
-            'input[id$="txtRPU"]',
-            'input[id*="RPU"]',
             'input[id$="txtUsuario"]',
-            'input[id*="Usuario"]',
-            'input[placeholder*="RPU"]',
+            'input[id*="suario"]',
+            'input[placeholder*="Usuario"]',
+            'input[placeholder*="Correo"]',
             'input[type="text"]:first-of-type',
         ]
-        await self._fill_first(page, usuario_selectors, self.rpu, "RPU")
+        await self._fill_first(page, usuario_selectors, self.usuario, "Usuario")
 
         # ── Contraseña ───────────────────────────────────────────────────────
         password_selectors = [
@@ -222,7 +223,7 @@ class CFEScraper:
             'input[id$="txtCodigo"]',
             'input[id*="aptcha"]',
             'input[id*="odigo"]',
-            # Fallback: el input de texto que no es RPU ni password
+            # Fallback: el input de texto que no es Usuario ni password
             'input[type="text"]:last-of-type',
         ]
         await self._fill_first(page, captcha_input_selectors, texto_captcha, "captcha")
@@ -268,7 +269,7 @@ class CFEScraper:
                 raise Exception("Captcha incorrecto (2captcha erró). Se reintentará en el siguiente ciclo.")
             raise Exception(
                 "Login fallido: seguimos en login.aspx. "
-                "Verificar RPU y contraseña, o activar debug_screenshots."
+                "Verificar Usuario y contraseña, o activar debug_screenshots."
             )
 
         log.info(f"[{self.nombre}] Login exitoso ✓")
@@ -286,6 +287,49 @@ class CFEScraper:
             f"No se encontró el campo '{campo}'. "
             "Activar debug_screenshots y revisar el log de inputs."
         )
+
+    # ── Selección de servicio ────────────────────────────────────────────────
+
+    async def _select_servicio(self, page):
+        """
+        Si la cuenta tiene múltiples servicios, selecciona el correcto
+        del dropdown ddlServicios. Si num_servicio está vacío, usa el primero.
+        """
+        try:
+            # Verificar que existe el dropdown
+            dropdown = await page.query_selector('#ctl00_MainContent_ddlServicios')
+            if not dropdown:
+                return  # una sola cuenta, no hay dropdown
+
+            if self.num_servicio:
+                # Seleccionar la opción que contenga el número de servicio
+                options = await page.eval_on_selector_all(
+                    '#ctl00_MainContent_ddlServicios option',
+                    "opts => opts.map(o => ({value: o.value, text: o.text}))"
+                )
+                log.info(f"[{self.nombre}] Servicios disponibles: {[o['text'] for o in options]}")
+
+                match = None
+                for opt in options:
+                    if self.num_servicio in opt['value'].replace(' ', '') or                        self.num_servicio in opt['text'].replace(' ', ''):
+                        match = opt['value']
+                        break
+
+                if match:
+                    await page.select_option('#ctl00_MainContent_ddlServicios', value=match)
+                    await page.wait_for_load_state("networkidle", timeout=10000)
+                    log.info(f"[{self.nombre}] Servicio seleccionado: {match}")
+                else:
+                    log.warning(f"[{self.nombre}] No se encontró servicio '{self.num_servicio}' en el dropdown, usando el primero")
+            else:
+                # Leer qué servicio está seleccionado por defecto
+                selected = await page.eval_on_selector(
+                    '#ctl00_MainContent_ddlServicios',
+                    "el => el.options[el.selectedIndex].text"
+                )
+                log.info(f"[{self.nombre}] Usando servicio por defecto: {selected}")
+        except Exception as e:
+            log.debug(f"[{self.nombre}] _select_servicio: {e} (normal si hay un solo servicio)")
 
     # ── Extracción de datos ───────────────────────────────────────────────────
 
@@ -317,7 +361,7 @@ class CFEScraper:
             'td:has-text("Fecha límite") + td',
             'td:has-text("Vencimiento") + td',
         ])
-        self.data["rpu"]          = self.rpu
+        self.data["usuario"]          = self.usuario
         self.data["nombre_cuenta"] = self.nombre
 
         log.info(
@@ -408,13 +452,14 @@ class MQTTPublisher:
             "model": "Portal CFE MX",
         }
         sensors = [
-            {"key": "saldo",              "name": f"CFE {nombre} Saldo",           "unit": "MXN",  "icon": "mdi:cash",              "state_class": "measurement"},
-            {"key": "consumo_kwh",         "name": f"CFE {nombre} Consumo",         "unit": "kWh",  "icon": "mdi:lightning-bolt",    "device_class": "energy", "state_class": "total_increasing"},
-            {"key": "fecha_corte",         "name": f"CFE {nombre} Fecha de Corte",                  "icon": "mdi:calendar-clock"},
-            {"key": "fecha_pago",          "name": f"CFE {nombre} Límite de Pago",                  "icon": "mdi:calendar-alert"},
-            {"key": "recibo_pdf",          "name": f"CFE {nombre} Recibo PDF",                      "icon": "mdi:file-pdf-box"},
-            {"key": "ultima_actualizacion","name": f"CFE {nombre} Actualización",                   "icon": "mdi:update"},
-            {"key": "error",               "name": f"CFE {nombre} Estado",                          "icon": "mdi:alert-circle-outline"},
+            {"key": "saldo",              "name": f"CFE {nombre} Saldo",           "unit": "MXN", "icon": "mdi:cash",                 "state_class": "measurement"},
+            {"key": "periodo",            "name": f"CFE {nombre} Periodo",                        "icon": "mdi:calendar-range"},
+            {"key": "fecha_limite",       "name": f"CFE {nombre} Fecha Límite",                   "icon": "mdi:calendar-alert"},
+            {"key": "estado_recibo",      "name": f"CFE {nombre} Estado Recibo",                  "icon": "mdi:check-circle-outline"},
+            {"key": "num_servicio",       "name": f"CFE {nombre} Núm. Servicio",                  "icon": "mdi:identifier"},
+            {"key": "recibo_pdf",         "name": f"CFE {nombre} Recibo PDF",                     "icon": "mdi:file-pdf-box"},
+            {"key": "ultima_actualizacion","name": f"CFE {nombre} Actualización",                 "icon": "mdi:update"},
+            {"key": "error",              "name": f"CFE {nombre} Estado",                         "icon": "mdi:alert-circle-outline"},
         ]
         for s in sensors:
             uid = f"cfe_{slug}_{s['key']}"
@@ -463,7 +508,7 @@ async def run_cycle(options: dict):
     publisher = MQTTPublisher(mqtt_host, mqtt_port, mqtt_user, mqtt_pass)
 
     for cuenta in cuentas:
-        log.info(f"─── {cuenta.get('nombre')} (RPU: {cuenta.get('rpu','')[:4]}***) ───")
+        log.info(f"─── {cuenta.get('nombre')} (Usuario: {cuenta.get('usuario','')[:4]}***) ───")
         scraper = CFEScraper(cuenta, captcha_api_key, debug=debug)
         data    = await scraper.scrape()
         slug    = slugify(cuenta["nombre"])

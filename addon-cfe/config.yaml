@@ -13,8 +13,9 @@ map:
 options:
   cuentas:
     - nombre: "Casa"
-      rpu: ""
+      usuario: ""
       password: ""
+      num_servicio: ""
   captcha_api_key: ""
   intervalo_horas: 12
   mqtt_host: "core-mosquitto"
@@ -25,8 +26,9 @@ options:
 schema:
   cuentas:
     - nombre: str
-      rpu: str
+      usuario: str
       password: str
+      num_servicio: str?
   captcha_api_key: str
   intervalo_horas: int
   mqtt_host: str
