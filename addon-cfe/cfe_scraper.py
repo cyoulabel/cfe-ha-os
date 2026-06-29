@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CFE Portal Addon para Home Assistant v1.6
+CFE Portal Addon para Home Assistant v1.7
 Extrae: saldo, consumo kWh, fecha corte, fecha pago, recibo PDF
 Resuelve captcha de imagen via 2captcha.com
 Publica via MQTT Discovery
@@ -670,7 +670,7 @@ def main():
     intervalo_horas = int(options.get("intervalo_horas", 24))
 
     log.info("=" * 55)
-    log.info("  CFE Portal Addon v1.6  |  captcha: 2captcha.com")
+    log.info("  CFE Portal Addon v1.7  |  captcha: 2captcha.com")
     log.info(f"  Cuentas: {len(options.get('cuentas',[]))}  |  Intervalo: {intervalo_horas}h")
     log.info("=" * 55)
 
@@ -684,6 +684,23 @@ def main():
             log.info(f"Estado anterior cargado: {list(ultimo_resultado.keys())}")
     except:
         pass
+
+    # Republicar último estado conocido al arrancar (por si MQTT perdió retained)
+    if ultimo_resultado:
+        try:
+            mqtt_host = options.get("mqtt_host", "core-mosquitto")
+            mqtt_port = int(options.get("mqtt_port", 1883))
+            mqtt_user = options.get("mqtt_user") or None
+            mqtt_pass = options.get("mqtt_password") or None
+            pub = MQTTPublisher(mqtt_host, mqtt_port, mqtt_user, mqtt_pass)
+            for slug, datos in ultimo_resultado.items():
+                nombre = datos.get("nombre_cuenta", slug)
+                pub.publish_discovery(slug, nombre)
+                pub.publish_data(slug, datos)
+            pub.disconnect()
+            log.info("Estado anterior republicado en MQTT ✓")
+        except Exception as e:
+            log.warning(f"No se pudo republicar estado anterior: {e}")
 
     # Esperar que la red esté lista antes del primer ciclo
     import socket
