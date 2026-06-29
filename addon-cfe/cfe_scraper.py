@@ -505,14 +505,14 @@ class MQTTPublisher:
             "model": "Portal CFE MX",
         }
         sensors = [
-            {"key": "saldo",              "name": f"CFE {nombre} Saldo",           "unit": "MXN", "icon": "mdi:cash",                 "state_class": "measurement"},
-            {"key": "periodo",            "name": f"CFE {nombre} Periodo",                        "icon": "mdi:calendar-range"},
-            {"key": "fecha_limite",       "name": f"CFE {nombre} Fecha Límite",                   "icon": "mdi:calendar-alert"},
-            {"key": "estado_recibo",      "name": f"CFE {nombre} Estado Recibo",                  "icon": "mdi:check-circle-outline"},
-            {"key": "num_servicio",       "name": f"CFE {nombre} Núm. Servicio",                  "icon": "mdi:identifier"},
-            {"key": "recibo_pdf",         "name": f"CFE {nombre} Recibo PDF",                     "icon": "mdi:file-pdf-box"},
-            {"key": "ultima_actualizacion","name": f"CFE {nombre} Actualización",                 "icon": "mdi:update"},
-            {"key": "error",              "name": f"CFE {nombre} Estado",                         "icon": "mdi:alert-circle-outline"},
+            {"key": "saldo",              "name": "Saldo",           "unit": "MXN", "icon": "mdi:cash",                 "state_class": "measurement"},
+            {"key": "periodo",            "name": "Periodo",                        "icon": "mdi:calendar-range"},
+            {"key": "fecha_limite",       "name": "Fecha Límite",                   "icon": "mdi:calendar-alert"},
+            {"key": "estado_recibo",      "name": "Estado Recibo",                  "icon": "mdi:check-circle-outline"},
+            {"key": "num_servicio",       "name": "Núm. Servicio",                  "icon": "mdi:identifier"},
+            {"key": "recibo_pdf",         "name": "Recibo PDF",                     "icon": "mdi:file-pdf-box"},
+            {"key": "ultima_actualizacion","name": "Actualización",                 "icon": "mdi:update"},
+            {"key": "error",              "name": "Estado",                         "icon": "mdi:alert-circle-outline"},
         ]
         for s in sensors:
             uid = f"cfe_{slug}_{s['key']}"
