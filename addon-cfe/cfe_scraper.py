@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CFE Portal Addon para Home Assistant v1.7
+CFE Portal Addon para Home Assistant v1.8
 Extrae: saldo, consumo kWh, fecha corte, fecha pago, recibo PDF
 Resuelve captcha de imagen via 2captcha.com
 Publica via MQTT Discovery
@@ -8,11 +8,16 @@ Publica via MQTT Discovery
 
 import asyncio
 import base64
+import email
+import html as html_lib
+import imaplib
+from email.header import decode_header, make_header
+from email.utils import parsedate_to_datetime
 import json
 import logging
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
@@ -120,16 +125,119 @@ async def resolver_captcha(page, api_key: str) -> str:
     return texto
 
 
+
+# ── Verificación en dos pasos (código por correo) ─────────────────────────────
+
+def _texto_de_correo(msg) -> str:
+    """Devuelve el texto plano (asunto + cuerpo) de un correo, quitando HTML."""
+    try:
+        asunto = str(make_header(decode_header(msg.get("Subject", ""))))
+    except Exception:
+        asunto = str(msg.get("Subject", ""))
+    partes = [asunto]
+    for part in msg.walk():
+        ctype = part.get_content_type()
+        if ctype not in ("text/plain", "text/html"):
+            continue
+        payload = part.get_payload(decode=True)
+        if not payload:
+            continue
+        texto = payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
+        if ctype == "text/html":
+            texto = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", texto, flags=re.S | re.I)
+            texto = re.sub(r"<[^>]+>", " ", texto)
+            texto = html_lib.unescape(texto)
+        partes.append(texto)
+    return re.sub(r"\s+", " ", " ".join(partes))
+
+
+def _extraer_codigo(texto: str):
+    """Busca el código de seguridad, priorizando lo que aparece después de 'código'."""
+    # Formato real de CFE (autenticacion@cfe.mx):
+    #   "Código de verificación  834071  Este código es válido por 5 minutos"
+    especifico = re.search(r"c[oó]digo de verificaci[oó]n\s+(\d{6})\b", texto, re.I)
+    if especifico:
+        return especifico.group(1)
+    m = re.search(r"c[oó]digo", texto, re.I)
+    zona = texto[m.start():m.start() + 200] if m else texto
+    for patron in (r"\b(\d{6})\b", r"\b(\d{3}[ -]\d{3})\b", r"\b(\d{4,8})\b"):
+        encontrado = re.search(patron, zona) or re.search(patron, texto)
+        if encontrado:
+            return re.sub(r"[ -]", "", encontrado.group(1))
+    return None
+
+
+def leer_codigo_mfa(imap_cfg: dict, desde: datetime, timeout_seg: int = 150):
+    """
+    Espera el correo de CFE con el código (llegado después de 'desde')
+    y regresa el código. Sondea la bandeja cada 10 segundos.
+    """
+    host      = imap_cfg.get("host") or "imap.gmail.com"
+    usuario   = imap_cfg.get("user")
+    password  = (imap_cfg.get("password") or "").replace(" ", "")
+    remitente = imap_cfg.get("remitente") or "autenticacion@cfe.mx"
+
+    if not usuario or not password:
+        raise Exception("CFE pidió verificación en dos pasos pero imap_user / imap_password no están configurados.")
+
+    limite = time.time() + timeout_seg
+    desde_utc = desde.astimezone(timezone.utc) - timedelta(seconds=60)
+
+    while time.time() < limite:
+        time.sleep(10)
+        try:
+            M = imaplib.IMAP4_SSL(host)
+            M.login(usuario, password)
+            M.select("INBOX", readonly=True)
+            fecha = (desde_utc - timedelta(days=1)).strftime("%d-%b-%Y")
+            criterio = f'(SINCE {fecha} FROM "{remitente}")' if remitente else f"(SINCE {fecha})"
+            _, data = M.search(None, criterio)
+            ids = data[0].split()[-15:]   # solo los más recientes
+
+            for mid in reversed(ids):
+                _, msg_data = M.fetch(mid, "(BODY.PEEK[])")
+                msg = email.message_from_bytes(msg_data[0][1])
+                try:
+                    fecha_msg = parsedate_to_datetime(msg.get("Date"))
+                    if fecha_msg.tzinfo is None:
+                        fecha_msg = fecha_msg.replace(tzinfo=timezone.utc)
+                except Exception:
+                    continue
+                if fecha_msg < desde_utc:
+                    continue
+
+                texto = _texto_de_correo(msg)
+                de = str(msg.get("From", "")).lower()
+                if "mfa" not in texto.lower() and "verificaci" not in texto.lower():
+                    continue
+
+                codigo = _extraer_codigo(texto)
+                if codigo:
+                    log.info(f"  ✓ Código MFA encontrado en correo '{str(msg.get('Subject',''))[:60]}' de {de[:50]}")
+                    M.logout()
+                    log.info(f"  Código: {codigo}")
+                    return codigo
+            M.logout()
+        except imaplib.IMAP4.error as e:
+            raise Exception(f"Error IMAP (revisa imap_user / contraseña de aplicación): {e}")
+        except Exception as e:
+            log.warning(f"  IMAP: {e}")
+        log.info("  Esperando correo con el código...")
+
+    raise Exception(f"No llegó el código de verificación en {timeout_seg}s.")
+
+
 # ── Scraper ──────────────────────────────────────────────────────────────────
 
 class CFEScraper:
-    def __init__(self, cuenta: dict, captcha_api_key: str, pdf_dir: str, debug: bool = False):
+    def __init__(self, cuenta: dict, captcha_api_key: str, pdf_dir: str, debug: bool = False, imap_cfg: dict = None):
         self.nombre          = cuenta["nombre"]
         self.usuario         = cuenta["usuario"]
         self.password        = cuenta["password"]
         self.num_servicio    = cuenta.get("num_servicio", "").replace(" ", "")
         self.captcha_api_key = captcha_api_key
         self.pdf_dir         = pdf_dir
+        self.imap_cfg        = imap_cfg or {}
         self.slug            = slugify(self.nombre)
         self.debug           = debug
         self.data: dict      = {}
@@ -244,6 +352,7 @@ class CFEScraper:
             'input[value*="Entrar"]',
             'input[value*="Acceder"]',
         ]
+        momento_submit = datetime.now().astimezone()
         submitted = False
         for sel in submit_selectors:
             try:
@@ -264,6 +373,21 @@ class CFEScraper:
 
         if self.debug:
             await self._screenshot(page, "04_post_login")
+
+        # ── Verificación en dos pasos ────────────────────────────────────────
+        if await page.query_selector("#ctl00_MainContent_txtMfaCode"):
+            log.info(f"[{self.nombre}] CFE pidió verificación en dos pasos — leyendo código del correo...")
+            codigo = await asyncio.to_thread(leer_codigo_mfa, self.imap_cfg, momento_submit)
+            await page.fill("#ctl00_MainContent_txtMfaCode", codigo)
+            await page.click("#ctl00_MainContent_btnValidarMfa")
+            await page.wait_for_load_state("networkidle", timeout=25000)
+            await page.wait_for_timeout(2000)
+            current_url = page.url
+            log.info(f"[{self.nombre}] URL post-MFA: {current_url}")
+            if self.debug:
+                await self._screenshot(page, "04b_post_mfa")
+            if await page.query_selector("#ctl00_MainContent_txtMfaCode"):
+                raise Exception("Verificación en dos pasos rechazada (código incorrecto o expirado).")
 
         if "login.aspx" in current_url.lower():
             # Captcha incorrecto o credenciales malas — verificar cuál
@@ -574,7 +698,13 @@ async def run_cycle(options: dict):
                 log.info(f"  Reintento {intento}/{max_intentos} en 15 segundos...")
                 await asyncio.sleep(15)
 
-            scraper = CFEScraper(cuenta, captcha_api_key, pdf_dir=pdf_dir, debug=debug)
+            imap_cfg = {
+                "host":      options.get("imap_host") or "imap.gmail.com",
+                "user":      cuenta.get("imap_user") or options.get("imap_user", ""),
+                "password":  cuenta.get("imap_password") or options.get("imap_password", ""),
+                "remitente": options.get("mfa_remitente", ""),
+            }
+            scraper = CFEScraper(cuenta, captcha_api_key, pdf_dir=pdf_dir, debug=debug, imap_cfg=imap_cfg)
             data    = await scraper.scrape()
 
             # Si el error es de captcha, reintentar; cualquier otro error, no
@@ -670,7 +800,7 @@ def main():
     intervalo_horas = int(options.get("intervalo_horas", 24))
 
     log.info("=" * 55)
-    log.info("  CFE Portal Addon v1.7  |  captcha: 2captcha.com")
+    log.info("  CFE Portal Addon v1.8  |  captcha: 2captcha.com")
     log.info(f"  Cuentas: {len(options.get('cuentas',[]))}  |  Intervalo: {intervalo_horas}h")
     log.info("=" * 55)
 
