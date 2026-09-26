@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CFE Portal Addon para Home Assistant v1.8.1
+CFE Portal Addon para Home Assistant v1.8.3
 Extrae: saldo, consumo kWh, fecha corte, fecha pago, recibo PDF
 Resuelve captcha de imagen via 2captcha.com
 Publica via MQTT Discovery
@@ -390,16 +390,53 @@ class CFEScraper:
                 raise Exception("Verificación en dos pasos rechazada (código incorrecto o expirado).")
 
         if "login.aspx" in current_url.lower():
-            # Captcha incorrecto o credenciales malas — verificar cuál
-            page_text = (await page.inner_text("body")).lower()
-            if any(p in page_text for p in ["captcha", "código incorrecto", "codigo incorrecto"]):
-                raise Exception("Captcha incorrecto (2captcha erró). Se reintentará en el siguiente ciclo.")
-            raise Exception(
-                "Login fallido: seguimos en login.aspx. "
-                "Verificar Usuario y contraseña, o activar debug_screenshots."
-            )
+            # Leer el mensaje real que muestra CFE para no adivinar la causa
+            mensaje = await self._mensaje_error_login(page)
+            log.warning(f"[{self.nombre}] CFE rechazó el login. Mensaje en pantalla: {mensaje or '(ninguno)'}")
+            await self._guardar_evidencia(page, "login_fallido")
+
+            m = (mensaje or "").lower()
+            if any(k in m for k in ["contraseña", "contrasena", "usuario", "bloquead", "credencial"]):
+                # Credenciales: NO reintentar (evita bloquear la cuenta)
+                raise Exception(f"Login fallido (credenciales): {mensaje}")
+            if any(k in m for k in ["captcha", "imagen", "texto", "código", "codigo"]) or not mensaje:
+                raise Exception(f"Captcha incorrecto: {mensaje or 'sin mensaje'}. Se reintentará.")
+            raise Exception(f"Login fallido: {mensaje}")
 
         log.info(f"[{self.nombre}] Login exitoso ✓")
+
+    async def _mensaje_error_login(self, page) -> str:
+        """Busca el texto de error visible que CFE muestra en login.aspx."""
+        try:
+            textos = await page.eval_on_selector_all(
+                '[id*="lbl" i], [id*="error" i], [id*="mensaje" i], [id*="msg" i], '
+                '.alert, [role="alert"], .text-danger, span[style*="color"], .modal-body',
+                """els => els
+                    .filter(e => e.offsetParent !== null)
+                    .map(e => (e.innerText || '').trim())
+                    .filter(t => t.length > 3 && t.length < 300)"""
+            )
+            ignorar = {"usuario:", "contraseña:", "ingresa el texto que aparece en la imagen:"}
+            vistos = []
+            for t in textos:
+                if t.lower() not in ignorar and t not in vistos:
+                    vistos.append(t)
+            return " | ".join(vistos)
+        except Exception as e:
+            log.debug(f"  _mensaje_error_login: {e}")
+            return ""
+
+    async def _guardar_evidencia(self, page, nombre: str):
+        """Guarda captura + HTML en <pdf_dir>/debug aunque debug_screenshots esté apagado."""
+        try:
+            d = Path(self.pdf_dir) / "debug"
+            d.mkdir(parents=True, exist_ok=True)
+            base = d / f"{self.slug}_{nombre}"
+            await page.screenshot(path=f"{base}.png", full_page=True)
+            Path(f"{base}.html").write_text(await page.content(), encoding="utf-8")
+            log.info(f"  Evidencia guardada: {base}.png / .html")
+        except Exception as e:
+            log.debug(f"  _guardar_evidencia: {e}")
 
     async def _fill_first(self, page, selectors: list, value: str, campo: str):
         """Llena el primer selector que funcione, lanza excepción si ninguno funciona."""
@@ -656,7 +693,9 @@ class MQTTPublisher:
 
     def publish_data(self, slug: str, data: dict):
         for key, value in data.items():
-            self.client.publish(f"cfe/{slug}/{key}", str(value) if value is not None else "desconocido", retain=True)
+            if key == "pdf_ok" or value is None or value == "":
+                continue   # no sobrescribir sensores con vacíos
+            self.client.publish(f"cfe/{slug}/{key}", str(value), retain=True)
         log.info(f"Datos publicados para '{slug}'")
 
     def disconnect(self):
@@ -709,7 +748,7 @@ async def run_cycle(options: dict):
 
             # Si el error es de captcha, reintentar; cualquier otro error, no
             error = data.get("error", "")
-            if "captcha" in error.lower() and intento < max_intentos:
+            if error.startswith("Captcha incorrecto") and intento < max_intentos:
                 log.warning(f"  Captcha incorrecto, reintentando...")
                 continue
             break  # Éxito o error no-captcha
@@ -717,9 +756,8 @@ async def run_cycle(options: dict):
         publisher.publish_discovery(slug, cuenta["nombre"])
         publisher.publish_data(slug, data)
         periodos_resultado[slug] = {
-            "periodo":       data.get("periodo", ""),
-            "estado_recibo": data.get("estado_recibo", ""),
-            "pdf_ok":        data.get("recibo_pdf", "no_encontrado") not in ("no_encontrado", ""),
+            **data,
+            "pdf_ok": data.get("recibo_pdf", "no_encontrado") not in ("no_encontrado", ""),
         }
 
     publisher.disconnect()
@@ -800,7 +838,7 @@ def main():
     intervalo_horas = int(options.get("intervalo_horas", 24))
 
     log.info("=" * 55)
-    log.info("  CFE Portal Addon v1.8.1  |  captcha: 2captcha.com")
+    log.info("  CFE Portal Addon v1.8.3  |  captcha: 2captcha.com")
     log.info(f"  Cuentas: {len(options.get('cuentas',[]))}  |  Intervalo: {intervalo_horas}h")
     log.info("=" * 55)
 
@@ -833,9 +871,11 @@ def main():
             mqtt_pass = options.get("mqtt_password") or None
             pub = MQTTPublisher(mqtt_host, mqtt_port, mqtt_user, mqtt_pass)
             for slug, datos in ultimo_resultado.items():
-                nombre = datos.get("nombre_cuenta", slug)
-                pub.publish_discovery(slug, nombre)
-                pub.publish_data(slug, datos)
+                if not datos.get("periodo"):
+                    continue   # estado incompleto: no publicar vacíos
+                limpio = {k: v for k, v in datos.items()
+                          if k not in ("pdf_ok", "error") and v not in (None, "")}
+                pub.publish_data(slug, limpio)
             pub.disconnect()
             log.info("Estado anterior republicado en MQTT ✓")
         except Exception as e:
@@ -859,9 +899,7 @@ def main():
             if isinstance(resultado, dict):
                 # Solo actualizar si el ciclo tuvo datos útiles (no solo error)
                 for slug, datos in resultado.items():
-                    if datos.get("periodo"):  # ciclo exitoso
-                        ultimo_resultado[slug] = datos
-                    elif slug not in ultimo_resultado:
+                    if datos.get("periodo"):  # solo ciclos exitosos
                         ultimo_resultado[slug] = datos
                 # Persistir en disco para sobrevivir reinicios
                 try:
