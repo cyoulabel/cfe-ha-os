@@ -1,6 +1,6 @@
 name: "CFE Portal"
 description: "Extrae saldo, consumo, fechas y recibo PDF del portal de CFE via MQTT Discovery"
-version: "1.7.0"
+version: "1.8.0"
 slug: "addon-cfe"
 init: false
 arch:
@@ -15,14 +15,18 @@ map:
     read_only: false
 options:
   cuentas:
-    - nombre: "Privada"
+    - nombre: "Casa"
       usuario: ""
       password: ""
       num_servicio: ""
   captcha_api_key: ""
+  imap_host: "imap.gmail.com"
+  imap_user: ""
+  imap_password: ""
+  mfa_remitente: "autenticacion@cfe.mx"
   intervalo_horas: 24
   dias_anticipo: 5
-  pdf_dir: "/config/www"
+  pdf_dir: "/config/www/cfe"
   mqtt_host: "core-mosquitto"
   mqtt_port: 1883
   mqtt_user: ""
@@ -35,6 +39,10 @@ schema:
       password: str
       num_servicio: str?
   captcha_api_key: str
+  imap_host: str?
+  imap_user: str?
+  imap_password: password?
+  mfa_remitente: str?
   intervalo_horas: int
   dias_anticipo: int?
   pdf_dir: str?
