@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CFE Portal Addon para Home Assistant v1.8
+CFE Portal Addon para Home Assistant v1.8.1
 Extrae: saldo, consumo kWh, fecha corte, fecha pago, recibo PDF
 Resuelve captcha de imagen via 2captcha.com
 Publica via MQTT Discovery
@@ -800,7 +800,7 @@ def main():
     intervalo_horas = int(options.get("intervalo_horas", 24))
 
     log.info("=" * 55)
-    log.info("  CFE Portal Addon v1.8  |  captcha: 2captcha.com")
+    log.info("  CFE Portal Addon v1.8.1  |  captcha: 2captcha.com")
     log.info(f"  Cuentas: {len(options.get('cuentas',[]))}  |  Intervalo: {intervalo_horas}h")
     log.info("=" * 55)
 
@@ -811,6 +811,15 @@ def main():
     try:
         if Path(ESTADO_FILE).exists():
             ultimo_resultado = json.load(open(ESTADO_FILE))
+            # Descartar cuentas que ya no están configuradas (evita republicar
+            # sensores viejos y disparar automatizaciones de cuentas eliminadas)
+            activas = {slugify(c.get("nombre", "")) for c in options.get("cuentas", [])}
+            descartadas = [s for s in ultimo_resultado if s not in activas]
+            for s in descartadas:
+                ultimo_resultado.pop(s)
+            if descartadas:
+                log.info(f"Estado de cuentas eliminadas descartado: {descartadas}")
+                json.dump(ultimo_resultado, open(ESTADO_FILE, "w"))
             log.info(f"Estado anterior cargado: {list(ultimo_resultado.keys())}")
     except:
         pass
